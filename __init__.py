@@ -7,25 +7,55 @@ import copy
 List of functions:
 * new_node
 * add_node
+* add_new_node
 * remove_node
+
 * add_child
 * add_new_child
+
 * add_sibling_adjacent_to
 * add_sibling_after
 * add_sibling_before
 * add_new_sibling_after
 * add_new_sibling_before
+
+* add_new_child_structure
+* shtree_from_structure
+
 * disconnect_parent
 * reparent_node
+
+* get_adjacent_sibling_i
 * get_adjacent_sibling
 * get_prev_sibling
 * get_next_sibling
+* get_prev_sibling_i
+* get_next_sibling_i
 * get_roots
+
+* get_child_i
+* get_child
+* get_parent_i
+* get_parent
+* get_first_leaf_i
+
+* child_count
 * is_descendant
-* get_nth_child
+
 * remove_disconnected
+
 * deepen
 * compactify
+* copy_subtree
+
+* prev_siblings
+* next_siblings
+
+* each_node_i
+* each_child_i
+* each_child
+
+* run_shtree_tests
 '''
 
 def new_node(**kargs):
@@ -61,20 +91,40 @@ def add_new_node(shtree, **kargs):
   return add_node(shtree, new_node(**kargs))
 
 
-def remove_node(shtree, node_i):
+def remove_node(shtree, node_i, *, and_subtree = True):
   node = shtree[node_i]
   disconnect_parent(shtree, node_i)
   child_i_list = node['child_i_list']
   for child_i in child_i_list:
-    child = shtree[child_i]
-    child['parent_i'] = None
-    child['parent_child_i'] = None
+    if and_subtree:
+      for subtree_node_i in [*each_node_i_leaf_first(shtree, child_i)]:
+        shtree[subtree_node_i] = None
+        # remove_node(shtree, subtree_node_i, and_subtree = False)
+    else:
+      child = shtree[child_i]
+      child['parent_i'] = None
+      child['parent_child_i'] = None
   node['child_i_list'] = []
   shtree[node_i] = None
 
 def _test_remove_node():
   import random
   shtree = [new_node()]
+  
+  # dont remove subtree subtree
+  while len(shtree) < 100:
+    parent_i = random.randint(0, len(shtree)-1)
+    add_new_child(shtree, parent_i)
+    _test_all_nodes_consistency(shtree)
+  while len(shtree) > 0:
+    node_i = random.randint(0, len(shtree)-1)
+    remove_node(shtree, node_i, and_subtree = False)
+    _test_all_nodes_consistency(shtree)
+    compactify(shtree)
+    _test_all_nodes_consistency(shtree)
+  
+  # remove subtrees
+  add_new_node(shtree)
   while len(shtree) < 100:
     parent_i = random.randint(0, len(shtree)-1)
     add_new_child(shtree, parent_i)
@@ -82,6 +132,7 @@ def _test_remove_node():
   while len(shtree) > 0:
     node_i = random.randint(0, len(shtree)-1)
     remove_node(shtree, node_i)
+    _test_all_nodes_consistency(shtree)
     compactify(shtree)
     _test_all_nodes_consistency(shtree)
 
@@ -89,17 +140,16 @@ def _test_remove_node():
 #######################
 
 
-def _test_parent_child_symmetry(shtree, node_i):
+def _test_node_properties_exist(shtree, node_i):
   node = shtree[node_i]
-  
-  parent_node_i = node['parent_i']
-  if parent_node_i != None:
-    parent_node = shtree[node['parent_i']]
-    assert parent_node['child_i_list'][node['parent_child_i']] == node_i
-  
-  for child_i in node['child_i_list']:
-    child = shtree[child_i]
-    assert child['parent_i'] == node_i
+  assert 'parent_i' in node
+  assert 'parent_child_i' in node
+  assert 'child_i_list' in node
+
+def _test_node_parent_exists(shtree, node_i):
+  node = shtree[node_i]
+  if node['parent_i'] != None:
+    assert shtree[node['parent_i']] != None
 
 def _test_node_children_exist(shtree, node_i):
   node = shtree[node_i]
@@ -108,10 +158,25 @@ def _test_node_children_exist(shtree, node_i):
     child = shtree[child_i]
     assert child != None
 
+def _test_parent_child_symmetry(shtree, node_i):
+  node = shtree[node_i]
+  
+  parent_node_i = node['parent_i']
+  if parent_node_i != None:
+    parent_node = shtree[parent_node_i]
+    assert parent_node != None
+    assert parent_node['child_i_list'][node['parent_child_i']] == node_i
+  
+  for child_i in node['child_i_list']:
+    child = shtree[child_i]
+    assert child['parent_i'] == node_i
+
 def _test_all_nodes_consistency(shtree):
   for node_i in range(0, len(shtree)):
     node = shtree[node_i]
     if node != None:
+      _test_node_properties_exist(shtree ,node_i)
+      _test_node_parent_exists(shtree, node_i)
       _test_node_children_exist(shtree, node_i)
       _test_parent_child_symmetry(shtree, node_i)
 
@@ -218,21 +283,104 @@ def _test_add_sibling_adjacent_to():
 
 #######################
 
+def replace_node_with_new(shtree, node_i, *, keep_children = True, **new_properties):
+  node = shtree[node_i]
+  
+  # remove children if required:
+  if not keep_children:
+    for child_i in [*node['child_i_list']]:
+      remove_node(shtree, child_i)
+  
+  # remove old properties
+  for key in [*node.keys()]:
+    if key == 'parent_i' or key == 'child_i_list' or key == 'parent_child_i':
+      continue # dont remove fundamental node properties
+    del node[key]
+  
+  # add new properties
+  node |= new_properties
 
+def _test_replace_node_with_new():
+  tree = shtree_from_structure(
+    {'a':-1},
+    [{'a':7}, [{'a':3}, {'a':1}, {'a':2}], [{'a':6}, {'a':4}, {'a':5}]]
+  )
+  correct_output = shtree_from_structure(
+    {'a':-1},
+    [{'a':7}, {'b':100}, [{'a':6}, {'a':4}, {'a':5}]]
+  )
+  replace_node_with_new(tree, 2, b=100, keep_children=False)
+  _test_all_nodes_consistency(tree)
+  compactify(tree)
+  _test_all_nodes_consistency(tree)
+  assert tree == correct_output
+
+
+## has bug, do later:
+# def replace_node(tree, node_i, repl_node_i, *, keep_children = True, keep_repl_children = True, remove = True):
+#   node = tree[node_i]
+#   repl_node = tree[repl_node_i]
+  
+#   # remove replacement's children if required:
+#   if not keep_repl_children:
+#     for child_i in [*repl_node['child_i_list']]:
+#       remove_node(tree, child_i)
+  
+#   # remove or move children if required:
+#   if not keep_children:
+#     for child_i in [*node['child_i_list']]:
+#       remove_node(tree, child_i)
+#   else: # move children to replacement
+#     for child_i in [*node['child_i_list']]:
+#       add_child(tree, repl_node_i, child_i)
+  
+#   # disconnect replacement from parent
+#   disconnect_parent(tree, repl_node_i)
+  
+#   # reconnect to new parent
+#   parent = tree[node['parent_i']]
+#   repl_node['parent_i'] = node['parent_i']
+#   parent['child_i_list'][node['parent_child_i']] = repl_node_i
+#   repl_node['parent_child_i'] = node['parent_child_i']
+  
+#   if remove:
+#     remove_node(tree, node_i)  
+
+#######################
+
+
+# This creates a new node with `a=1` and with a single child with `a=2`:
+#   add_new_child_structure(tree, parent_i, {'a':1}, {'a':2})
+# This creates a new node with a child with its own children:
+#   add_new_child_structure(tree, parent_i, {'a':1}, [{'b':2}, {'c': 3}])
+# The basic form of the significant arguments is:
+#   {parent_props...}, {child_props...} or [{child_props}, {child_child_props}, ...]
+# Argument lists -> nodes with children
+# Argument dicts -> nodes with no children
+# See _tryme below
 def add_new_child_structure(tree, parent_i, *spec_list):
   for spec in spec_list:
-    new_child_kwargs = spec[0]
-    recursive_specs  = spec[1:]
-    child_i = add_new_child(tree, parent_i, **new_child_kwargs)
-    for new_spec_list in recursive_specs:
-      add_new_child_structure(tree, child_i, *new_spec_list)
+    if type(spec) is dict: # new child with no children
+      add_new_child(tree, parent_i, **spec)
+    else: # new child with children
+      new_child_kwargs = spec[0]
+      recursive_specs  = spec[1:]
+      child_i = add_new_child(tree, parent_i, **new_child_kwargs)
+      add_new_child_structure(tree, child_i, *recursive_specs)
 
-
+# This is just like add_new_child_structure but without the `tree` and `parent_i` args
 def shtree_from_structure(root_kwargs, *spec_list):
   new_tree = [new_node(**root_kwargs)]
   add_new_child_structure(new_tree, 0, *spec_list)
   return new_tree
 
+def _tryme():
+  print(deepen(shtree_from_structure({'a':1},
+    [{'a':2}, {'a':3}, [{'a':4}, {'a':10}]],
+    [{'a':5}, [{'a':6}], [{'a':7}]]
+  )))
+  
+  print(deepen(shtree_from_structure({'a':1}, {'b':2})))
 
 #######################
 
@@ -246,7 +394,7 @@ def disconnect_parent(shtree, node_i):
   parent_node = shtree[parent_i]
   node['parent_i'] = None
   
-  # Adjust sublings' parent_child_i values
+  # Adjust siblings' parent_child_i values
   node_parent_child_i = node['parent_child_i']
   parent_child_i_list = parent_node['child_i_list']
   for i in range(node_parent_child_i + 1, len(parent_child_i_list)):
@@ -589,6 +737,42 @@ def each_child(shtree, parent_i):
   return (shtree[child_i] for child_i in shtree[parent_i]['child_i_list'])
 
 
+def each_node_i_leaf_first(shtree, root_i = 0):
+  node_i = get_first_leaf_i(shtree, root_i)
+  while True:
+    
+    # get next node_i first
+    next_i = None
+    node = shtree[node_i]
+    parent_i = node['parent_i']
+    if node_i != root_i  and parent_i != None:
+      next_i = get_next_sibling_i(shtree, node_i) # try going to next sibling
+      
+      if next_i != None: # have next sibling
+        if child_count(shtree, next_i) > 0: # next has children
+          next_i = get_first_leaf_i(shtree, next_i) # descent to first leaf
+        
+      else: # no next sibling
+        next_i = parent_i # go to parent
+    
+    # then yield
+    yield node_i
+    
+    # and set node_i to next or return
+    if next_i == None:
+      break
+    else:
+      node_i = next_i
+
+def _test_each_node_i_leaf_first():
+  tree = shtree_from_structure(
+    {'a':-1},
+    [{'a':7}, [{'a':3}, {'a':1}, {'a':2}], [{'a':6}, {'a':4}, {'a':5}]]
+  )
+  res = [*map(lambda i: tree[i]['a'], each_node_i_leaf_first(tree, 1))]
+  assert res == [1,2,3,4,5,6,7]
+
+
 #######################
 
 def _misc_test_1():
@@ -625,8 +809,10 @@ def run_shtree_tests():
   _test_remove_node()
   _test_add_sibling_adjacent_to()
   _test_prev_next_siblings()
+  _test_replace_node_with_new()
   _test_copy_subtree_full()
   _test_copy_subtree_partial()
+  _test_each_node_i_leaf_first()
   _misc_test_1()
   _misc_test_2()
 
